@@ -13,9 +13,11 @@ func sumBytes(header []byte) uint32 {
 	return sum
 }
 
+const HeaderBytes = 512
+
 func MakeHeader(seq uint64, length int) []byte {
 	// See: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html - ustar interchange format
-	header := make([]byte, 512)
+	header := make([]byte, HeaderBytes)
 	// name:
 	filename := fmt.Sprintf("%016d.entry", seq)
 	copy(header[0:], filename)
@@ -47,5 +49,3 @@ func MakeHeader(seq uint64, length int) []byte {
 	copy(header[148:], chksum)
 	return header
 }
-
-const HeaderBytes = 512
