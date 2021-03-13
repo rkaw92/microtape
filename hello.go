@@ -1,16 +1,17 @@
 package main
 
 import (
-	"crypto/rand"
 	"fmt"
 	"log"
 	"math"
 	"os"
 	"time"
+
+	"github.com/rkaw92/microtape/tar"
 )
 
-const maxGroupCommit = 10000
-const testIterations = 100
+const maxGroupCommit = 10
+const testIterations = 10
 const numWriters = 1
 const tickerIntervalMS = 100
 
@@ -41,8 +42,17 @@ type CommittedWrite struct {
 func writer(file *os.File, jobs chan WriteJob, results chan WriteResult) {
 	for job := range jobs {
 		// TODO: Add internal error handling + retries
-		//fmt.Println("job:", job)
-		_, err := file.WriteAt(job.data, job.offset)
+		dataLength := len(job.data)
+		header := tar.MakeHeader(job.id, dataLength)
+		_, err := file.WriteAt(header, job.offset)
+		if err == nil {
+			_, err = file.WriteAt(job.data, job.offset+tar.HeaderBytes)
+			blockPaddingLength := (tar.HeaderBytes - (dataLength % tar.HeaderBytes)) & (tar.HeaderBytes - 1)
+			blockPadding := make([]byte, blockPaddingLength)
+			if blockPaddingLength > 0 {
+				file.WriteAt(blockPadding, job.offset+tar.HeaderBytes+int64(dataLength))
+			}
+		}
 		results <- WriteResult{err, job.offset, job.id, job.callback}
 	}
 }
@@ -111,10 +121,13 @@ type WriteSubmitter struct {
 
 func (s *WriteSubmitter) submit(blob []byte) WriteJob {
 	newID := s.lastID + 1
+	dataLength := len(blob)
 	job := WriteJob{blob, s.offset, newID, make(chan bool, 1)}
 	s.jobs <- job
 	s.lastID = newID
-	s.offset += int64(len(blob))
+	blockPaddingLength := (tar.HeaderBytes - (dataLength % tar.HeaderBytes)) & (tar.HeaderBytes - 1)
+	totalSize := tar.HeaderBytes + dataLength + blockPaddingLength
+	s.offset += int64(totalSize)
 	return job
 }
 
@@ -154,10 +167,9 @@ func main() {
 	go func() {
 		var lastJob WriteJob
 		for testIteration := uint64(0); testIteration < testIterations; testIteration++ {
-			var data4KB []byte = make([]byte, 4096)
-			rand.Read(data4KB)
 			for i := uint64(0); i < maxGroupCommit; i++ {
-				lastJob = submitter.submit(data4KB)
+				var data = []byte(fmt.Sprint("Hello, world ", testIteration*maxGroupCommit+i))
+				lastJob = submitter.submit(data)
 			}
 		}
 		lastJobChannel <- lastJob
